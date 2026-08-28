@@ -1,10 +1,13 @@
 import cors from 'cors';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import { configurePassport, passport } from './auth/passport.js';
+import { createSessionMiddleware } from './auth/session.js';
 import { env } from './config/env.js';
 import { createLogger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
 import { isElasticsearchAvailable } from './lib/elasticsearch.js';
+import { authRouter } from './routes/auth.js';
 
 const log = createLogger('http');
 
@@ -23,8 +26,17 @@ export function createApp(): Express {
     }),
   );
 
+  // 5mb: a pasted lead list can be large, but recipients are parsed in the
+  // browser and posted as a JSON array, not as a raw file upload.
   app.use(express.json({ limit: '5mb' }));
   app.use(express.urlencoded({ extended: true }));
+
+  app.use(createSessionMiddleware());
+  configurePassport();
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  app.use('/api/auth', authRouter);
 
   app.get('/health', async (_req: Request, res: Response) => {
     const [db, cache, search] = await Promise.all([
