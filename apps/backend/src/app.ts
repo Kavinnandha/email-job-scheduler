@@ -8,6 +8,8 @@ import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
 import { isElasticsearchAvailable } from './lib/elasticsearch.js';
 import { authRouter } from './routes/auth.js';
+import { campaignsRouter } from './routes/campaigns.js';
+import { emailsRouter } from './routes/emails.js';
 import { sendersRouter } from './routes/senders.js';
 
 const log = createLogger('http');
@@ -39,6 +41,8 @@ export function createApp(): Express {
 
   app.use('/api/auth', authRouter);
   app.use('/api/senders', sendersRouter);
+  app.use('/api/campaigns', campaignsRouter);
+  app.use('/api/emails', emailsRouter);
 
   app.get('/health', async (_req: Request, res: Response) => {
     const [db, cache, search] = await Promise.all([
