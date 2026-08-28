@@ -43,3 +43,39 @@ export function toDateTimeLocalValue(date: Date): string {
     `T${pad(date.getHours())}:${pad(date.getMinutes())}`
   );
 }
+
+/**
+ * Chip format from the design: "Tue 9:15:12 AM".
+ * Seconds are included because scheduled sends are staggered by seconds, so
+ * minute precision would render consecutive rows as identical times.
+ */
+export function formatRowTime(iso: string | null): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
+  const time = date.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+
+  return `${weekday} ${time}`;
+}
+
+/** Long form for the reading view header: "Nov 3, 10:23 AM". */
+export function formatDetailTime(iso: string | null): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}

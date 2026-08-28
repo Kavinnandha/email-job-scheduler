@@ -3,6 +3,7 @@ import type {
   Campaign,
   CreateCampaignRequest,
   CreateCampaignResponse,
+  EmailDetail,
   EmailRecord,
   EmailStatus,
   Paginated,
@@ -52,6 +53,18 @@ export const getEmails = (params: EmailListParams = {}) =>
 
 export const searchEmails = (params: EmailListParams & { q: string }) =>
   apiRequest<EmailSearchResponse>(`/api/emails/search${toQueryString({ ...params })}`);
+
+export const getEmail = (id: string) => apiRequest<EmailDetail>(`/api/emails/${id}`);
+
+export const setEmailStarred = (id: string, starred: boolean) =>
+  apiRequest<{ ok: true; starred: boolean }>(`/api/emails/${id}/star`, {
+    method: 'PATCH',
+    body: { starred },
+  });
+
+/** Cancels a scheduled email: removes its queued job and deletes the row. */
+export const cancelEmail = (id: string) =>
+  apiRequest<{ ok: true }>(`/api/emails/${id}`, { method: 'DELETE' });
 
 // --- Slack ------------------------------------------------------------------
 

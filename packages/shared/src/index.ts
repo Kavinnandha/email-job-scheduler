@@ -55,6 +55,14 @@ export interface EmailRecord {
   previewUrl: string | null;
   error: string | null;
   attempts: number;
+  starred: boolean;
+}
+
+/** A single email plus the campaign body, for the reading view. */
+export interface EmailDetail extends EmailRecord {
+  body: string;
+  senderDisplayName: string;
+  createdAt: string;
 }
 
 export interface Campaign {
@@ -93,8 +101,9 @@ export interface CreateCampaignRequest {
   startTime: string;
   /** Minimum gap between consecutive sends, in seconds. */
   delaySeconds: number;
-  /** Per-campaign hourly pacing. Still bounded by the hard per-sender cap. */
-  hourlyLimit: number;
+  /** Per-campaign hourly pacing. Omitted falls back to the server default,
+   *  and is always bounded by the hard per-sender cap. */
+  hourlyLimit?: number;
   /** Empty/omitted => use every active sender. */
   senderIds?: string[];
 }

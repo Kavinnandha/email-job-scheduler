@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import type { EmailStatus } from '@repo/shared';
-import { Header } from '@/components/Header';
-import { ComposeModal } from '@/components/ComposeModal';
-import { EmailTable } from '@/components/EmailTable';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { Tabs } from '@/components/ui/Tabs';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import type { EmailRecord, EmailStatus } from '@repo/shared';
+import { Sidebar } from '@/components/layout/Sidebar';
+import { TopBar, type TopBarFilters } from '@/components/layout/TopBar';
+import { EmailRow } from '@/components/email/EmailRow';
+import { Pagination } from '@/components/email/Pagination';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Spinner } from '@/components/ui/Spinner';
+import { UndoIcon } from '@/components/icons';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/hooks/useAuth';
-import { useEmailList } from '@/hooks/useEmails';
+import { useEmailList, useSenders, useToggleStar } from '@/hooks/useEmails';
 
 type TabValue = Extract<EmailStatus, 'SCHEDULED' | 'SENT'>;
 
@@ -20,14 +21,21 @@ const SLACK_MESSAGES: Record<string, { text: string; tone: 'success' | 'error' }
   failed: { text: 'Could not connect Slack', tone: 'error' },
 };
 
+const EMPTY_FILTERS: TopBarFilters = { senderId: null, starredOnly: false };
+
 export function DashboardPage() {
   const { user } = useAuth();
   const { notify } = useToast();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [tab, setTab] = useState<TabValue>('SCHEDULED');
   const [search, setSearch] = useState('');
-  const [composeOpen, setComposeOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [filters, setFilters] = useState<TopBarFilters>(EMPTY_FILTERS);
+
+  const senders = useSenders();
+  const toggleStar = useToggleStar();
 
   // The Slack callback redirects back with a result code; surface it once and
   // strip it so a refresh does not repeat the toast.
@@ -42,71 +50,124 @@ export function DashboardPage() {
     setSearchParams(searchParams, { replace: true });
   }, [searchParams, setSearchParams, notify]);
 
-  // Both lists poll: the scheduled list drains as the worker sends, and the
-  // sent list grows at the same moment. Polling only the visible tab would
-  // leave the other tab's count stale in the header.
-  const scheduled = useEmailList({ status: 'SCHEDULED', page: 1, search, pollMs: 5000 });
-  const sent = useEmailList({ status: 'SENT', page: 1, search, pollMs: 5000 });
+  // Any change to what is being asked for invalidates the current page number.
+  useEffect(() => setPage(1), [tab, search, filters]);
+
+  const scheduled = useEmailList({ status: 'SCHEDULED', page, search, pollMs: 5000 });
+  const sent = useEmailList({ status: 'SENT', page, search, pollMs: 5000 });
 
   const active = tab === 'SCHEDULED' ? scheduled : sent;
 
-  const tabItems = useMemo(
-    () => [
-      { value: 'SCHEDULED' as const, label: 'Scheduled', count: scheduled.data?.total },
-      { value: 'SENT' as const, label: 'Sent', count: sent.data?.total },
-    ],
-    [scheduled.data?.total, sent.data?.total],
-  );
+  /**
+   * Sender and starred filtering is applied client-side against the current
+   * page. The list endpoint paginates server-side and does not accept these
+   * as query parameters, so filtering here narrows what the user is looking
+   * at without misreporting the totals, which stay server-authoritative.
+   */
+  const visibleRows = useMemo(() => {
+    const items = active.data?.items ?? [];
+    return items.filter(
+      (item) =>
+        (!filters.senderId || item.senderId === filters.senderId) &&
+        (!filters.starredOnly || item.starred),
+    );
+  }, [active.data?.items, filters]);
+
+  const filtersActive = Boolean(search || filters.senderId || filters.starredOnly);
+
+  const handleOpen = (email: EmailRecord) => navigate(`/email/${email.id}`);
+
+  const handleToggleStar = (email: EmailRecord) =>
+    toggleStar.mutate(
+      { id: email.id, starred: !email.starred },
+      { onError: () => notify('Could not update star', 'error') },
+    );
+
+  const resetView = () => {
+    setSearch('');
+    setFilters(EMPTY_FILTERS);
+    setPage(1);
+  };
 
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-surface-muted">
-      <Header user={user} />
+    <div className="flex h-screen overflow-hidden bg-white">
+      <Sidebar
+        user={user}
+        counts={{ SCHEDULED: scheduled.data?.total, SENT: sent.data?.total }}
+        activeStatus={tab}
+        onSelectStatus={setTab}
+      />
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-semibold text-slate-900">Campaigns</h1>
-            <p className="mt-0.5 text-sm text-slate-500">
-              Track what is queued and what has already gone out.
-            </p>
-          </div>
-          <Button onClick={() => setComposeOpen(true)}>Compose new email</Button>
-        </div>
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <TopBar
+          search={search}
+          onSearchChange={setSearch}
+          filters={filters}
+          onFiltersChange={setFilters}
+          senders={senders.data ?? []}
+          onRefresh={() => void active.refetch()}
+          refreshing={active.isFetching}
+        />
 
-        <div className="rounded-xl bg-white shadow-sm ring-1 ring-surface-border">
-          <div className="flex flex-wrap items-center justify-between gap-4 px-4 pt-3">
-            <Tabs items={tabItems} value={tab} onChange={setTab} />
-            <div className="w-full pb-3 sm:w-64">
-              <Input
-                type="search"
-                placeholder="Search subject or recipient…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+        <div className="flex-1 overflow-y-auto pb-24">
+          {active.isLoading ? (
+            <div className="flex items-center justify-center gap-3 py-24 text-ink-muted">
+              <Spinner className="text-brand-500" />
+              <span className="text-sm">Loading…</span>
             </div>
-          </div>
-
-          <EmailTable
-            status={tab}
-            rows={active.data?.items ?? []}
-            // isLoading is false while placeholderData keeps the previous page
-            // on screen, so the table does not flash a spinner while typing.
-            loading={active.isLoading}
-            error={active.error ? active.error.message : null}
-            emptyAction={
-              tab === 'SCHEDULED' && !search ? (
-                <Button size="sm" onClick={() => setComposeOpen(true)}>
-                  Compose new email
-                </Button>
-              ) : undefined
-            }
-          />
+          ) : active.error ? (
+            <EmptyState
+              tone="error"
+              title="Could not load emails"
+              description={active.error.message}
+            />
+          ) : visibleRows.length === 0 ? (
+            <EmptyState
+              title={
+                filtersActive
+                  ? 'No emails match this view'
+                  : tab === 'SCHEDULED'
+                    ? 'No scheduled emails'
+                    : 'No sent emails yet'
+              }
+              description={
+                filtersActive
+                  ? 'Try clearing the search or filters.'
+                  : tab === 'SCHEDULED'
+                    ? 'Compose a campaign to queue your first batch.'
+                    : 'Emails appear here once the worker delivers them.'
+              }
+            />
+          ) : (
+            visibleRows.map((email) => (
+              <EmailRow
+                key={email.id}
+                email={email}
+                onOpen={handleOpen}
+                onToggleStar={handleToggleStar}
+              />
+            ))
+          )}
         </div>
-      </main>
 
-      <ComposeModal open={composeOpen} onClose={() => setComposeOpen(false)} />
+        <Pagination
+          page={active.data?.page ?? 1}
+          totalPages={active.data?.totalPages ?? 1}
+          onChange={setPage}
+        />
+
+        {filtersActive && (
+          <button
+            onClick={resetView}
+            className="absolute bottom-6 right-6 flex items-center gap-2 rounded-full bg-[#1f2329] px-4 py-2.5 text-sm font-medium text-white shadow-pop transition-opacity hover:opacity-90"
+          >
+            <UndoIcon className="h-4 w-4" />
+            Reset
+          </button>
+        )}
+      </div>
     </div>
   );
 }

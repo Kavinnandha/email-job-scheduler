@@ -2,11 +2,14 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import type { CreateCampaignRequest, EmailStatus, Paginated, EmailRecord } from '@repo/shared';
 import type { ApiError } from '@/api/client';
 import {
+  cancelEmail,
   createCampaign,
   getCampaigns,
+  getEmail,
   getEmails,
   getSenders,
   searchEmails,
+  setEmailStarred,
   type EmailSearchResponse,
 } from '@/api/endpoints';
 
@@ -72,6 +75,66 @@ export function useCreateCampaign() {
       // New emails land as SCHEDULED, so both tables and the counts are stale.
       void queryClient.invalidateQueries({ queryKey: emailKeys.all });
       void queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+    },
+  });
+}
+
+export function useEmail(id: string | undefined) {
+  return useQuery({
+    queryKey: ['email', id],
+    queryFn: () => getEmail(id as string),
+    enabled: Boolean(id),
+  });
+}
+
+/**
+ * Star toggling is optimistic: the icon must respond on the click, not after a
+ * round trip. Every cached list page is patched, and the previous cache is
+ * restored if the request fails so the UI cannot drift from the server.
+ */
+export function useToggleStar() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, starred }: { id: string; starred: boolean }) =>
+      setEmailStarred(id, starred),
+
+    onMutate: async ({ id, starred }) => {
+      await queryClient.cancelQueries({ queryKey: emailKeys.all });
+      const snapshot = queryClient.getQueriesData<Paginated<EmailRecord>>({
+        queryKey: emailKeys.all,
+      });
+
+      for (const [key, data] of snapshot) {
+        if (!data?.items) continue;
+        queryClient.setQueryData(key, {
+          ...data,
+          items: data.items.map((item) => (item.id === id ? { ...item, starred } : item)),
+        });
+      }
+
+      return { snapshot };
+    },
+
+    onError: (_err, _vars, context) => {
+      for (const [key, data] of context?.snapshot ?? []) {
+        queryClient.setQueryData(key, data);
+      }
+    },
+
+    onSettled: (_data, _err, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['email', variables.id] });
+    },
+  });
+}
+
+export function useCancelEmail() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => cancelEmail(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: emailKeys.all });
     },
   });
 }

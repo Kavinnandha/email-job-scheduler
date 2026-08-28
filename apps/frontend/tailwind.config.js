@@ -4,28 +4,36 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Single source of truth for the palette; components reference these
+        // Single source of truth for the palette. Components reference these
         // names rather than repeating hex values.
-        surface: {
-          DEFAULT: '#ffffff',
-          muted: '#f8fafc',
-          border: '#e2e8f0',
-        },
         brand: {
-          50: '#eef4ff',
-          100: '#dbe6fe',
-          500: '#4f6ef7',
-          600: '#3b55e0',
-          700: '#2f43b8',
+          50: '#e9f7ee',   // active nav pill, Google button fill
+          100: '#d3efdd',
+          400: '#22b455',
+          500: '#00a63e',  // primary green - Compose border, Login button
+          600: '#009336',
+          700: '#00782c',
         },
-        status: {
-          scheduled: '#b45309',
-          sent: '#047857',
-          failed: '#b91c1c',
+        ink: {
+          DEFAULT: '#1a1a1a',
+          muted: '#6b7280',
+          faint: '#9ca3af',
+        },
+        field: '#f4f5f6',   // input / search fill
+        line: '#e8eaed',    // hairline borders
+        chip: {
+          warn: '#fdf0dd',  // scheduled time pill
+          warnText: '#b45309',
+          idle: '#eceef0',  // sent pill
+          idleText: '#3f4652',
         },
       },
       fontFamily: {
         sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      },
+      boxShadow: {
+        pop: '0 10px 34px -6px rgba(16, 24, 40, 0.18)',
+        card: '0 1px 2px rgba(16, 24, 40, 0.04)',
       },
     },
   },

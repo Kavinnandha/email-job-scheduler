@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import type { EmailRecord, Paginated } from '@repo/shared';
+import type { EmailDetail, EmailRecord, Paginated } from '@repo/shared';
 import type { Email, Sender } from '@prisma/client';
 import { getUser, requireAuth } from '../auth/requireAuth.js';
+import { createLogger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
-import { searchEmails } from '../search/emails.js';
+import { emailJobId, emailQueue } from '../queue/queue.js';
+import { removeEmailFromIndex, searchEmails } from '../search/emails.js';
+
+const log = createLogger('emails-routes');
 
 export const emailsRouter: Router = Router();
 
@@ -35,6 +39,7 @@ export function toEmailDto(email: EmailWithRelations): EmailRecord {
     previewUrl: email.previewUrl,
     error: email.error,
     attempts: email.attempts,
+    starred: email.starred,
   };
 }
 
@@ -136,6 +141,109 @@ emailsRouter.get('/', requireAuth, async (req, res, next) => {
     };
 
     res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Single email plus the campaign body, for the reading view.
+ * Registered after the list routes so ':id' cannot shadow '/search'.
+ */
+emailsRouter.get('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const user = getUser(req);
+    const email = await prisma.email.findFirst({
+      // Scoped by userId as well as id, so an id guessed from another account
+      // returns 404 rather than leaking a row.
+      where: { id: req.params.id, userId: user.id },
+      include: {
+        sender: { select: { name: true, fromEmail: true } },
+        campaign: { select: { subject: true, body: true } },
+      },
+    });
+
+    if (!email) {
+      res.status(404).json({ error: 'Email not found' });
+      return;
+    }
+
+    const payload: EmailDetail = {
+      ...toEmailDto(email),
+      body: email.campaign.body,
+      senderDisplayName: email.sender?.name ?? 'Unknown sender',
+      createdAt: email.createdAt.toISOString(),
+    };
+
+    res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const starSchema = z.object({ starred: z.boolean() });
+
+emailsRouter.patch('/:id/star', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = starSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
+      return;
+    }
+
+    const user = getUser(req);
+    // updateMany rather than update: it scopes by userId in the same statement
+    // and reports 0 rows instead of throwing when the id is not the caller's.
+    const result = await prisma.email.updateMany({
+      where: { id: req.params.id, userId: user.id },
+      data: { starred: parsed.data.starred },
+    });
+
+    if (result.count === 0) {
+      res.status(404).json({ error: 'Email not found' });
+      return;
+    }
+
+    res.json({ ok: true, starred: parsed.data.starred });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Cancels a scheduled email: removes its delayed job and deletes the row.
+ *
+ * Only SCHEDULED emails can be cancelled. A sent email has already left the
+ * building, so deleting it would misrepresent the delivery log.
+ */
+emailsRouter.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const user = getUser(req);
+    const email = await prisma.email.findFirst({
+      where: { id: req.params.id, userId: user.id },
+      select: { id: true, status: true },
+    });
+
+    if (!email) {
+      res.status(404).json({ error: 'Email not found' });
+      return;
+    }
+
+    if (email.status !== 'SCHEDULED') {
+      res.status(409).json({ error: 'Only scheduled emails can be cancelled' });
+      return;
+    }
+
+    // Remove the job first. If the row were deleted first and this failed, the
+    // job would survive and the worker would wake to a missing email.
+    const job = await emailQueue.getJob(emailJobId(email.id));
+    if (job) await job.remove();
+
+    await prisma.email.delete({ where: { id: email.id } });
+    await removeEmailFromIndex(email.id);
+
+    log.info({ emailId: email.id }, 'scheduled email cancelled');
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

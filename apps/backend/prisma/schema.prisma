@@ -111,6 +111,10 @@ model Email {
   error      String? @db.Text
   attempts   Int     @default(0)
 
+  /// Dashboard affordance, not part of delivery. Kept on the row so it
+  /// survives a page reload and is per-email rather than per-campaign.
+  starred Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

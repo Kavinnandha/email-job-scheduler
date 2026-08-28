@@ -8,6 +8,26 @@
   }
 
   body {
-    @apply bg-surface-muted text-slate-900 font-sans;
+    @apply bg-white text-ink font-sans;
+  }
+}
+
+@layer utilities {
+  /* Used by the reading view and the editor, where content is user-authored
+     and cannot carry Tailwind classes of its own. */
+  .prose-email p {
+    @apply my-3 leading-relaxed;
+  }
+  .prose-email ul {
+    @apply my-3 list-disc pl-6;
+  }
+  .prose-email ol {
+    @apply my-3 list-decimal pl-6;
+  }
+  .prose-email blockquote {
+    @apply my-3 border-l-4 border-line pl-4 text-ink-muted;
+  }
+  .prose-email a {
+    @apply text-brand-600 underline;
   }
 }

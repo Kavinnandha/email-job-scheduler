@@ -196,3 +196,13 @@ export async function searchEmails(input: SearchEmailsInput): Promise<SearchEmai
 
   return { ids: rows.map((r) => r.id), total, usedElasticsearch: false };
 }
+
+/** Removes a cancelled email from the index. Best-effort, like indexing. */
+export async function removeEmailFromIndex(emailId: string): Promise<void> {
+  try {
+    if (!(await isElasticsearchAvailable())) return;
+    await esClient.delete({ index: EMAILS_INDEX, id: emailId }, { ignore: [404] });
+  } catch (err) {
+    log.warn({ emailId, err: String(err) }, 'failed to remove email from index');
+  }
+}

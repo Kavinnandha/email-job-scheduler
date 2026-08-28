@@ -3,6 +3,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { Spinner } from '@/components/ui/Spinner';
 import { LoginPage } from '@/pages/Login';
 import { DashboardPage } from '@/pages/Dashboard';
+import { ComposePage } from '@/pages/Compose';
+import { EmailDetailPage } from '@/pages/EmailDetail';
 
 function FullPageSpinner() {
   return (
@@ -10,6 +12,12 @@ function FullPageSpinner() {
       <Spinner size="lg" className="text-brand-500" />
     </div>
   );
+}
+
+/** Sends unauthenticated visitors to the login page, preserving nothing else. */
+function Protected({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated } = useAuth();
+  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
 export function App() {
@@ -27,7 +35,27 @@ export function App() {
       />
       <Route
         path="/"
-        element={isAuthenticated ? <DashboardPage /> : <Navigate to="/login" replace />}
+        element={
+          <Protected>
+            <DashboardPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/compose"
+        element={
+          <Protected>
+            <ComposePage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/email/:id"
+        element={
+          <Protected>
+            <EmailDetailPage />
+          </Protected>
+        }
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
