@@ -35,7 +35,9 @@ services:
       retries: 10
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    # Docker Hub mirror of the official image; docker.elastic.co is flaky
+    # from some networks and is not required for a single-node dev cluster.
+    image: elasticsearch:8.13.4
     container_name: ejs-elasticsearch
     restart: unless-stopped
     environment:

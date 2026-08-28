@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EmailStatus {
+  SCHEDULED
+  SENT
+  FAILED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  googleId  String   @unique
+  email     String   @unique
+  name      String
+  avatarUrl String?
+  createdAt DateTime @default(now())
+
+  campaigns Campaign[]        @relation("UserCampaigns")
+  slack     SlackIntegration?
+
+  @@map("users")
+}
+
+/// An SMTP account we can send from. Seeded from Ethereal on first boot
+/// (or from the SMTP_SENDERS env var). Rate limits are tracked per sender.
+model Sender {
+  id        String   @id @default(cuid())
+  name      String
+  fromEmail String   @unique
+  smtpHost  String
+  smtpPort  Int
+  smtpUser  String
+  smtpPass  String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  emails Email[]
+
+  @@map("senders")
+}
+
+/// Per-user Slack connection, created by the real OAuth v2 flow.
+/// Absence simply means "don't notify" - never an error.
+model SlackIntegration {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  teamId      String?
+  teamName    String?
+  channel     String?
+  webhookUrl  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("slack_integrations")
+}
+
+model Campaign {
+  id              String   @id @default(cuid())
+  userId          String
+  subject         String
+  body            String   @db.Text
+  startTime       DateTime
+  /// Minimum gap between consecutive sends in this campaign, in ms.
+  delayMs         Int
+  /// Per-campaign hourly pacing. Still bounded by the hard per-sender cap.
+  hourlyLimit     Int
+  senderIds       String[]
+  totalRecipients Int
+  createdAt       DateTime @default(now())
+
+  user   User    @relation("UserCampaigns", fields: [userId], references: [id], onDelete: Cascade)
+  emails Email[]
+
+  @@index([userId, createdAt])
+  @@map("campaigns")
+}
+
+model Email {
+  id         String      @id @default(cuid())
+  campaignId String
+  userId     String
+  recipient  String
+  status     EmailStatus @default(SCHEDULED)
+
+  /// Assigned at schedule time (round-robin over the campaign's senders),
+  /// NOT chosen inside the worker. A retried or rescheduled job therefore
+  /// always hits the same sender, so rate-limit counters, send-slot
+  /// reservations and Slack alerts stay attributed to one sender across
+  /// attempts - and the dashboard can show the sender while still SCHEDULED.
+  senderId String
+
+  /// Position within the campaign. Drives the schedule stagger, and the
+  /// ordering offset when a job spills into the next hour window.
+  sequenceIndex Int
+
+  scheduledAt DateTime
+  sentAt      DateTime?
+
+  /// UNIQUE so a duplicate that slips through the crash window described in
+  /// the README is detectable in the DB rather than silent.
+  messageId  String? @unique
+  previewUrl String?
+  error      String? @db.Text
+  attempts   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  sender   Sender   @relation(fields: [senderId], references: [id])
+
+  @@index([status, scheduledAt])
+  @@index([campaignId])
+  @@index([userId, status])
+  @@index([senderId, status])
+  @@map("emails")
+}
