@@ -1,0 +1,29 @@
+{
+  "name": "email-job-scheduler",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-grade email scheduler service + dashboard (BullMQ, Redis, Postgres, Elasticsearch, Ethereal SMTP)",
+  "author": "Kavin Nandha",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,worker,web -c blue,magenta,green \"pnpm dev:api\" \"pnpm dev:worker\" \"pnpm dev:web\"",
+    "dev:api": "pnpm --filter @repo/backend dev",
+    "dev:worker": "pnpm --filter @repo/backend dev:worker",
+    "dev:web": "pnpm --filter @repo/frontend dev",
+    "build": "pnpm --filter @repo/shared build && pnpm --filter @repo/backend build && pnpm --filter @repo/frontend build",
+    "typecheck": "pnpm -r typecheck",
+    "db:migrate": "pnpm --filter @repo/backend db:migrate",
+    "db:generate": "pnpm --filter @repo/backend db:generate",
+    "db:studio": "pnpm --filter @repo/backend db:studio",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}
