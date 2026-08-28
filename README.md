@@ -66,8 +66,12 @@ apps/
     src/
       api/                   typed fetch client
       components/ui/         reusable primitives
+      components/layout/     sidebar, top bar, account menu
+      components/email/      list row, pagination
+      components/compose/    recipient chips, editor, send-later popover
+      components/icons/      shared icon set
       hooks/                 auth and email-list data hooks
-      pages/                 Login, Dashboard
+      pages/                 Login, Dashboard, Compose, EmailDetail
 packages/
   shared/                    types shared by API and SPA
 ```
@@ -136,7 +140,7 @@ pnpm dev:web      # React dashboard on :5173
 
 Sender accounts are provisioned automatically on first boot. `SENDER_COUNT` (default 3) mailboxes are created through the Ethereal API and cached in `.ethereal-accounts.json` (gitignored) so restarts reuse the same inboxes rather than stranding sent mail in inboxes nobody can reopen.
 
-Every delivered email stores a preview URL, surfaced as **View message** in the Sent tab.
+Every delivered email stores a preview URL, surfaced as **View delivered message on Ethereal** in the reading view.
 
 > Accounts are created by calling the Ethereal API directly rather than nodemailer's `createTestAccount()`, which memoises its result and would hand back the same mailbox N times — collapsing the sender pool to one and making per-sender rate limiting meaningless.
 
@@ -162,7 +166,7 @@ Missing Google credentials is a warning, not a boot failure — the rest of the 
 3. Redirect URL: `http://localhost:4000/api/slack/callback`
 4. Copy the client ID and secret into `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`
 
-Connect from the dashboard header. Slack asks which channel to post to, and returns a webhook bound to just that channel — the app never holds permission to post anywhere else.
+Connect from the account card in the sidebar. Slack asks which channel to post to, and returns a webhook bound to just that channel — the app never holds permission to post anywhere else.
 
 ---
 
@@ -371,7 +375,7 @@ This is stated plainly rather than claiming a guarantee the architecture cannot 
 
 ## Slack notifications
 
-Real OAuth v2 with the `incoming-webhook` scope, connected from the dashboard header.
+Real OAuth v2 with the `incoming-webhook` scope, connected from the account card in the sidebar.
 
 - **One alert per sender per hour window.** Claimed with `SET NX`, so a limit hit by hundreds of concurrent jobs still produces exactly one message.
 - **Only the hard per-sender tier alerts.** A user's own campaign pacing working as configured is not an incident.
@@ -412,6 +416,9 @@ All `/api` routes except the auth and Slack callbacks require an authenticated s
 | `GET` | `/api/campaigns` | Campaigns with per-status counts |
 | `GET` | `/api/emails?status=&page=` | Paginated emails |
 | `GET` | `/api/emails/search?q=&status=` | Full-text search |
+| `GET` | `/api/emails/:id` | Single email plus campaign body |
+| `PATCH` | `/api/emails/:id/star` | Star or unstar |
+| `DELETE` | `/api/emails/:id` | Cancel a scheduled email |
 | `GET` | `/api/senders` | Active sender pool |
 | `GET` | `/api/slack/start` | Begin Slack OAuth |
 | `GET` | `/api/slack/callback` | Slack callback |
@@ -475,17 +482,39 @@ All `/api` routes except the auth and Slack callbacks require an authenticated s
 | Requirement | Status | Where |
 |---|---|---|
 | Real Google OAuth login | Done | `pages/Login.tsx` |
-| Header with name, email, avatar, logout | Done | `components/Header.tsx` |
-| Scheduled / Sent tabs | Done | `pages/Dashboard.tsx` |
-| Compose modal | Done | `components/ComposeModal.tsx` |
-| CSV upload with detected-address count | Done | `lib/csv.ts` |
-| Start time, delay, hourly limit inputs | Done | `components/ComposeModal.tsx` |
-| Scheduled table | Done | `components/EmailTable.tsx` |
-| Sent table with status and preview link | Done | `components/EmailTable.tsx` |
-| Loading, empty and error states | Done | `components/ui/Table.tsx` |
+| Account name, email, avatar, logout | Done | `components/layout/Sidebar.tsx`, `UserMenu.tsx` |
+| Scheduled / Sent sections with counts | Done | `components/layout/Sidebar.tsx` |
+| Compose screen | Done | `pages/Compose.tsx` |
+| CSV upload with detected-address count | Done | `lib/csv.ts`, `compose/RecipientInput.tsx` |
+| Start time, delay, hourly limit inputs | Done | `pages/Compose.tsx` |
+| Scheduled list | Done | `components/email/EmailRow.tsx` |
+| Sent list with status and preview link | Done | `components/email/EmailRow.tsx`, `pages/EmailDetail.tsx` |
+| Loading, empty and error states | Done | `pages/Dashboard.tsx`, `components/ui/EmptyState.tsx` |
 | Toasts | Done | `components/ui/Toast.tsx` |
-| Reusable primitives, DRY | Done | `components/ui/` |
+| Reusable primitives, DRY | Done | `components/ui/`, `components/icons/` |
 | Typed API responses and props | Done | `packages/shared` |
+
+### UI built to the provided Figma
+
+The dashboard follows the supplied design: sidebar shell with the wordmark and
+account card, pill search with filter and refresh, full-bleed rows with the
+orange scheduled-time chip and neutral sent chip, a floating pagination pill, a
+reading view, and a full-page composer with a formatting toolbar and Send Later
+popover. Design tokens are declared once in `tailwind.config.js`.
+
+Two controls in the design do not map onto this backend, and are handled
+explicitly rather than left as dead affordances:
+
+- **Login email/password fields** render as designed, but submitting explains
+  that this workspace authenticates through Google and points at that button.
+  There is no password store to authenticate against.
+- **Compose attachments** stage files and show the paperclip count badge, but
+  the scheduler delivers the message body only; the toast says so on attach.
+
+The composer authors rich text and flattens it to plain text before sending,
+because the worker delivers `text/plain` — shipping markup through would put
+visible tags in the recipient's inbox. Block boundaries become newlines so
+paragraphs and list items survive as line breaks.
 
 Lead files are parsed by scanning for anything shaped like an address rather than by column position, because exports vary in column order, headers and quoting — and some are just newline-separated lists. Duplicates are removed and reported before scheduling.
 
@@ -520,10 +549,13 @@ Everything below was run against live Postgres, Redis, Elasticsearch and Etherea
 - `redis-cli FLUSHALL` → queue emptied, then `alreadyQueued=0, reEnqueued=6` rebuilt from Postgres. The one past-due email sent immediately on recovery while the 5 future ones kept their original times.
 
 **Frontend** — driven through the real UI in a browser
-- Composed a campaign end to end: a 4-row CSV containing one duplicate reported **"3 email addresses detected (1 duplicates removed)"**
-- Submission produced *"Scheduled 3 emails"*, closed the modal and populated the table
-- With a campaign limit of 2: 2 delivered across different senders, 1 deferred, one rate-limit event logged
-- Sent tab showed both rows with working preview links
+- Composed a campaign end to end: a 4-row CSV containing one duplicate produced 3 recipient chips and a "3 recipients" count
+- Submission produced *"Scheduled 3 emails"*, returned to the list and populated it
+- Rows rendered with the design's `Fri 6:43:31 pm` chip format and a visible 1s stagger between consecutive sends
+- With an hourly limit of 2: Scheduled 1 / Sent 2, with the correct scheduled and sent chip styling
+- Send Later presets applied and flipped the action button to *Send Later*
+- Star toggled optimistically; a row opened its reading view; Reset appeared only while filters were active and cleared them
+- Login card matched the specified 620px card / 62px control metrics and palette
 
 **A bug this caught:** switching to the Sent tab showed a stale *"No sent emails yet"* after mail had already gone out — the global `staleTime` suppressed the refetch. Fixed by treating email lists as always stale, since the worker changes them from outside the browser.
 
