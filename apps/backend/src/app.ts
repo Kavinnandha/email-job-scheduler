@@ -8,6 +8,7 @@ import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
 import { isElasticsearchAvailable } from './lib/elasticsearch.js';
 import { authRouter } from './routes/auth.js';
+import { sendersRouter } from './routes/senders.js';
 
 const log = createLogger('http');
 
@@ -37,6 +38,7 @@ export function createApp(): Express {
   app.use(passport.session());
 
   app.use('/api/auth', authRouter);
+  app.use('/api/senders', sendersRouter);
 
   app.get('/health', async (_req: Request, res: Response) => {
     const [db, cache, search] = await Promise.all([

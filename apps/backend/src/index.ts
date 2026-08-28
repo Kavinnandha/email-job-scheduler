@@ -4,12 +4,14 @@ import { ensureEmailsIndex } from './lib/elasticsearch.js';
 import { createLogger } from './lib/logger.js';
 import { disconnectPrisma } from './lib/prisma.js';
 import { disconnectRedis } from './lib/redis.js';
+import { ensureSenderPool } from './mail/senders.js';
 
 const log = createLogger('api');
 
 async function main() {
-  // Safe to call on every boot; creating an existing index is a no-op.
+  // Both are idempotent and safe to run on every boot in either process.
   await ensureEmailsIndex();
+  await ensureSenderPool();
 
   const app = createApp();
   const server = app.listen(env.PORT, () => {
