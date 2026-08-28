@@ -12,6 +12,7 @@ import { authRouter } from './routes/auth.js';
 import { campaignsRouter } from './routes/campaigns.js';
 import { emailsRouter } from './routes/emails.js';
 import { sendersRouter } from './routes/senders.js';
+import { slackRouter } from './routes/slack.js';
 
 const log = createLogger('http');
 
@@ -44,6 +45,7 @@ export function createApp(): Express {
   app.use('/api/senders', sendersRouter);
   app.use('/api/campaigns', campaignsRouter);
   app.use('/api/emails', emailsRouter);
+  app.use('/api/slack', slackRouter);
 
   // Live queue visibility: delayed, active, completed and failed jobs.
   const bullBoard = createBullBoardRouter();
