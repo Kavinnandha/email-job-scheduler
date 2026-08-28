@@ -40,6 +40,11 @@ export function useEmailList({ status, page, search, pollMs }: UseEmailListOptio
     // typing in the search box do not flash an empty table.
     placeholderData: keepPreviousData,
     refetchInterval: pollMs,
+    // These lists change from outside the browser - the worker delivers mail
+    // on its own schedule - so a cached result is never trustworthy. Without
+    // this, the global staleTime suppresses the refetch on a tab switch and
+    // the Sent tab renders its pre-delivery empty state until the next poll.
+    staleTime: 0,
   });
 }
 

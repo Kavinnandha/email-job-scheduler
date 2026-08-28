@@ -42,20 +42,11 @@ export function DashboardPage() {
     setSearchParams(searchParams, { replace: true });
   }, [searchParams, setSearchParams, notify]);
 
-  const scheduled = useEmailList({
-    status: 'SCHEDULED',
-    page: 1,
-    search,
-    // Only the scheduled list is live - it drains as the worker sends.
-    pollMs: 5000,
-  });
-
-  const sent = useEmailList({
-    status: 'SENT',
-    page: 1,
-    search,
-    pollMs: tab === 'SENT' ? 5000 : undefined,
-  });
+  // Both lists poll: the scheduled list drains as the worker sends, and the
+  // sent list grows at the same moment. Polling only the visible tab would
+  // leave the other tab's count stale in the header.
+  const scheduled = useEmailList({ status: 'SCHEDULED', page: 1, search, pollMs: 5000 });
+  const sent = useEmailList({ status: 'SENT', page: 1, search, pollMs: 5000 });
 
   const active = tab === 'SCHEDULED' ? scheduled : sent;
 
