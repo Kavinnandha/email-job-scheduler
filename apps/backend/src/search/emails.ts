@@ -1,0 +1,198 @@
+import type { EmailStatus } from '@repo/shared';
+import { EMAILS_INDEX, esClient, isElasticsearchAvailable } from '../lib/elasticsearch.js';
+import { createLogger } from '../lib/logger.js';
+import { prisma } from '../lib/prisma.js';
+
+const log = createLogger('search');
+
+export interface EmailSearchHit {
+  id: string;
+  campaignId: string;
+  userId: string;
+  senderId: string;
+  senderName: string;
+  recipient: string;
+  subject: string;
+  status: EmailStatus;
+  sequenceIndex: number;
+  scheduledAt: string;
+  sentAt: string | null;
+}
+
+/**
+ * Indexing is best-effort by design. Elasticsearch is a search accelerator,
+ * not the system of record - Postgres is - so a failure here is logged and
+ * swallowed rather than allowed to fail a job that already delivered mail.
+ * Losing a document costs search freshness; throwing would cost a duplicate
+ * send on the retry.
+ */
+export async function indexEmail(emailId: string): Promise<void> {
+  try {
+    if (!(await isElasticsearchAvailable())) return;
+
+    const email = await prisma.email.findUnique({
+      where: { id: emailId },
+      include: { sender: { select: { name: true } }, campaign: { select: { subject: true, body: true } } },
+    });
+    if (!email) return;
+
+    await esClient.index({
+      index: EMAILS_INDEX,
+      id: email.id,
+      // Upsert semantics: re-indexing the same id overwrites, so a status
+      // transition never leaves two documents for one email.
+      document: {
+        campaignId: email.campaignId,
+        userId: email.userId,
+        senderId: email.senderId,
+        senderName: email.sender.name,
+        recipient: email.recipient,
+        subject: email.campaign.subject,
+        body: email.campaign.body,
+        status: email.status,
+        sequenceIndex: email.sequenceIndex,
+        scheduledAt: email.scheduledAt.toISOString(),
+        sentAt: email.sentAt?.toISOString() ?? null,
+      },
+      refresh: false,
+    });
+  } catch (err) {
+    log.warn({ emailId, err: String(err) }, 'failed to index email - search may be stale');
+  }
+}
+
+/** Bulk variant used when a whole campaign is scheduled at once. */
+export async function indexEmailsForCampaign(campaignId: string): Promise<number> {
+  try {
+    if (!(await isElasticsearchAvailable())) return 0;
+
+    const emails = await prisma.email.findMany({
+      where: { campaignId },
+      include: { sender: { select: { name: true } }, campaign: { select: { subject: true, body: true } } },
+    });
+    if (emails.length === 0) return 0;
+
+    const operations = emails.flatMap((email) => [
+      { index: { _index: EMAILS_INDEX, _id: email.id } },
+      {
+        campaignId: email.campaignId,
+        userId: email.userId,
+        senderId: email.senderId,
+        senderName: email.sender.name,
+        recipient: email.recipient,
+        subject: email.campaign.subject,
+        body: email.campaign.body,
+        status: email.status,
+        sequenceIndex: email.sequenceIndex,
+        scheduledAt: email.scheduledAt.toISOString(),
+        sentAt: email.sentAt?.toISOString() ?? null,
+      },
+    ]);
+
+    const result = await esClient.bulk({ operations, refresh: false });
+    if (result.errors) log.warn({ campaignId }, 'some documents failed to index');
+
+    return emails.length;
+  } catch (err) {
+    log.warn({ campaignId, err: String(err) }, 'bulk index failed - search may be stale');
+    return 0;
+  }
+}
+
+export interface SearchEmailsInput {
+  userId: string;
+  query: string;
+  status?: EmailStatus;
+  page: number;
+  pageSize: number;
+}
+
+export interface SearchEmailsResult {
+  ids: string[];
+  total: number;
+  /** False when the query was served by the Postgres fallback. */
+  usedElasticsearch: boolean;
+}
+
+/**
+ * Full-text search over subject, body and recipient, always scoped to the
+ * requesting user. Returns ids only; the caller re-reads the rows from
+ * Postgres so the response is authoritative even if the index lags.
+ */
+export async function searchEmails(input: SearchEmailsInput): Promise<SearchEmailsResult> {
+  const { userId, query, status, page, pageSize } = input;
+
+  if (await isElasticsearchAvailable()) {
+    try {
+      const filter: Record<string, unknown>[] = [{ term: { userId } }];
+      if (status) filter.push({ term: { status } });
+
+      const response = await esClient.search({
+        index: EMAILS_INDEX,
+        from: (page - 1) * pageSize,
+        size: pageSize,
+        query: {
+          bool: {
+            filter,
+            must: query
+              ? [
+                  {
+                    multi_match: {
+                      query,
+                      // Subject outranks body; recipient is boosted so searching
+                      // for an address finds it ahead of a body mention.
+                      fields: ['subject^3', 'recipient^2', 'body'],
+                      fuzziness: 'AUTO',
+                    },
+                  },
+                ]
+              : [{ match_all: {} }],
+          },
+        },
+        sort: [{ scheduledAt: { order: 'desc' } }],
+      });
+
+      const total =
+        typeof response.hits.total === 'number'
+          ? response.hits.total
+          : (response.hits.total?.value ?? 0);
+
+      return {
+        ids: response.hits.hits.map((hit) => hit._id).filter((id): id is string => Boolean(id)),
+        total,
+        usedElasticsearch: true,
+      };
+    } catch (err) {
+      log.warn({ err: String(err) }, 'elasticsearch query failed - falling back to postgres');
+    }
+  }
+
+  // Fallback: correctness over ranking. Slower and no relevance scoring, but
+  // search keeps working when the cluster is down.
+  const where = {
+    userId,
+    ...(status ? { status } : {}),
+    ...(query
+      ? {
+          OR: [
+            { recipient: { contains: query, mode: 'insensitive' as const } },
+            { campaign: { subject: { contains: query, mode: 'insensitive' as const } } },
+            { campaign: { body: { contains: query, mode: 'insensitive' as const } } },
+          ],
+        }
+      : {}),
+  };
+
+  const [total, rows] = await Promise.all([
+    prisma.email.count({ where }),
+    prisma.email.findMany({
+      where,
+      orderBy: { scheduledAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: { id: true },
+    }),
+  ]);
+
+  return { ids: rows.map((r) => r.id), total, usedElasticsearch: false };
+}

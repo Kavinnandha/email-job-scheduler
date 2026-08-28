@@ -2,6 +2,7 @@ import type { Campaign, Email, Sender } from '@prisma/client';
 import { env } from '../config/env.js';
 import { createLogger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
+import { indexEmailsForCampaign } from '../search/emails.js';
 import { emailJobId, emailQueue, type EmailJobData } from './queue.js';
 
 const log = createLogger('scheduler');
@@ -85,6 +86,9 @@ export async function scheduleCampaign(
   });
 
   await enqueueEmails(emails);
+
+  // Best-effort: indexing failures must never fail a scheduled campaign.
+  await indexEmailsForCampaign(campaign.id);
 
   log.info(
     { campaignId: campaign.id, count: emails.length, delayMs, hourlyLimit },
