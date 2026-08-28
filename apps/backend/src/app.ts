@@ -1,6 +1,7 @@
 import cors from 'cors';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { configurePassport, passport } from './auth/passport.js';
+import { createBullBoardRouter } from './bullboard.js';
 import { createSessionMiddleware } from './auth/session.js';
 import { env } from './config/env.js';
 import { createLogger } from './lib/logger.js';
@@ -43,6 +44,10 @@ export function createApp(): Express {
   app.use('/api/senders', sendersRouter);
   app.use('/api/campaigns', campaignsRouter);
   app.use('/api/emails', emailsRouter);
+
+  // Live queue visibility: delayed, active, completed and failed jobs.
+  const bullBoard = createBullBoardRouter();
+  app.use(bullBoard.path, ...bullBoard.handlers);
 
   app.get('/health', async (_req: Request, res: Response) => {
     const [db, cache, search] = await Promise.all([

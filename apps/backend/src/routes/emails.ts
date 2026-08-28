@@ -4,6 +4,7 @@ import type { EmailRecord, Paginated } from '@repo/shared';
 import type { Email, Sender } from '@prisma/client';
 import { getUser, requireAuth } from '../auth/requireAuth.js';
 import { prisma } from '../lib/prisma.js';
+import { searchEmails } from '../search/emails.js';
 
 export const emailsRouter: Router = Router();
 
@@ -36,6 +37,62 @@ export function toEmailDto(email: EmailWithRelations): EmailRecord {
     attempts: email.attempts,
   };
 }
+
+const searchQuerySchema = listQuerySchema.extend({
+  q: z.string().trim().default(''),
+});
+
+/**
+ * Elasticsearch returns ids; the rows themselves are re-read from Postgres so
+ * the response reflects current state even when the index lags behind a
+ * status change. Registered before '/' so it is not shadowed by it.
+ */
+emailsRouter.get('/search', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = searchQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
+      return;
+    }
+
+    const user = getUser(req);
+    const { q, status, page, pageSize } = parsed.data;
+
+    const result = await searchEmails({ userId: user.id, query: q, status, page, pageSize });
+
+    const rows =
+      result.ids.length === 0
+        ? []
+        : await prisma.email.findMany({
+            where: { id: { in: result.ids }, userId: user.id },
+            include: {
+              sender: { select: { name: true, fromEmail: true } },
+              campaign: { select: { subject: true } },
+            },
+          });
+
+    // findMany does not honour the order of an `in` list, so restore the
+    // relevance ranking Elasticsearch returned.
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const ordered = result.ids
+      .map((id) => byId.get(id))
+      .filter((row): row is (typeof rows)[number] => Boolean(row));
+
+    const payload: Paginated<EmailRecord> & { usedElasticsearch: boolean } = {
+      items: ordered.map(toEmailDto),
+      page,
+      pageSize,
+      total: result.total,
+      totalPages: Math.max(1, Math.ceil(result.total / pageSize)),
+      // Surfaced so the UI can tell the user when results are unranked.
+      usedElasticsearch: result.usedElasticsearch,
+    };
+
+    res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
 
 emailsRouter.get('/', requireAuth, async (req, res, next) => {
   try {
