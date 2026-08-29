@@ -11,13 +11,23 @@ import { useCreateCampaign, useSenders } from '@/hooks/useEmails';
 import { htmlToPlainText } from '@/lib/html';
 import { cn } from '@/lib/cn';
 
+/**
+ * Sentinel for "spread this campaign across every active sender".
+ *
+ * Selecting it omits senderIds from the request, which is what makes the
+ * backend round-robin the recipients over the whole pool - each sender then
+ * carries its own share of the hourly ceiling instead of one account
+ * absorbing the entire campaign.
+ */
+const ALL_SENDERS = 'all';
+
 export function ComposePage() {
   const navigate = useNavigate();
   const { notify } = useToast();
   const senders = useSenders();
   const createCampaign = useCreateCampaign();
 
-  const [senderId, setSenderId] = useState<string>('');
+  const [senderId, setSenderId] = useState<string>(ALL_SENDERS);
   const [recipients, setRecipients] = useState<string[]>([]);
   const [subject, setSubject] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
@@ -30,8 +40,11 @@ export function ComposePage() {
 
   const attachmentRef = useRef<HTMLInputElement>(null);
 
-  const activeSender = useMemo(
-    () => senders.data?.find((s) => s.id === senderId) ?? senders.data?.[0],
+  // Null means the whole pool. A stale id - a sender retired since the page
+  // loaded - also resolves to null, so the campaign falls back to the pool
+  // rather than being pinned to whichever sender happens to be first.
+  const selectedSender = useMemo(
+    () => (senderId === ALL_SENDERS ? null : (senders.data?.find((s) => s.id === senderId) ?? null)),
     [senders.data, senderId],
   );
 
@@ -76,7 +89,9 @@ export function ComposePage() {
       startTime: (sendAt ?? new Date()).toISOString(),
       delaySeconds: delaySeconds ? Number(delaySeconds) : 0,
       ...(hourlyLimit ? { hourlyLimit: Number(hourlyLimit) } : {}),
-      ...(activeSender ? { senderIds: [activeSender.id] } : {}),
+      // Omitted on purpose when no single sender is chosen: the backend then
+      // round-robins across every active sender.
+      ...(selectedSender ? { senderIds: [selectedSender.id] } : {}),
     };
 
     createCampaign.mutate(payload, {
@@ -158,11 +173,14 @@ export function ComposePage() {
             <span className="w-[70px] shrink-0 text-[15px] text-ink-muted">From</span>
             <div className="relative">
               <select
-                value={activeSender?.id ?? ''}
+                value={senderId}
                 onChange={(e) => setSenderId(e.target.value)}
                 aria-label="From address"
                 className="cursor-pointer appearance-none rounded-lg bg-field py-2.5 pl-4 pr-10 text-[15px] font-medium text-ink focus:outline-none focus:ring-2 focus:ring-brand-100"
               >
+                <option value={ALL_SENDERS}>
+                  All senders{senders.data ? ` (${senders.data.length})` : ''} — round-robin
+                </option>
                 {(senders.data ?? []).map((sender) => (
                   <option key={sender.id} value={sender.id}>
                     {sender.fromEmail}

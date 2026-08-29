@@ -32,17 +32,23 @@ export const createCampaign = (payload: CreateCampaignRequest) =>
 // --- Emails -----------------------------------------------------------------
 
 export interface EmailListParams {
-  status?: EmailStatus;
+  /** One or more statuses; the API takes them as a comma-separated list. */
+  status?: EmailStatus[];
   page?: number;
   pageSize?: number;
 }
 
 export type EmailSearchResponse = Paginated<EmailRecord> & { usedElasticsearch: boolean };
 
-function toQueryString(params: Record<string, string | number | undefined>): string {
+type QueryValue = string | number | string[] | undefined;
+
+function toQueryString(params: Record<string, QueryValue>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== '') search.set(key, String(value));
+    // An empty array is "no filter", not "match nothing", so it is dropped
+    // alongside undefined rather than sent as an empty parameter.
+    const serialised = Array.isArray(value) ? value.join(',') : value;
+    if (serialised !== undefined && serialised !== '') search.set(key, String(serialised));
   }
   const query = search.toString();
   return query ? `?${query}` : '';

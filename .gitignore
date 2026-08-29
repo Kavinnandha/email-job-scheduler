@@ -7,6 +7,13 @@ dist/
 build/
 *.tsbuildinfo
 
+# Compiled output emitted beside its own source. Vite resolves '.js' before
+# '.tsx', so a stale App.js sitting next to App.tsx is what actually gets
+# bundled - these must never be committed or left lying around.
+apps/frontend/src/**/*.js
+apps/frontend/src/**/*.js.map
+apps/frontend/vite.config.js
+
 # env / secrets
 .env
 .env.*

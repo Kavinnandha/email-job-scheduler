@@ -51,8 +51,8 @@ export function EmailDetailPage() {
   const isScheduled = record.status === 'SCHEDULED';
 
   // Return to the tab this email belongs to rather than the dashboard default,
-  // which would silently switch a sent email's reader over to Scheduled.
-  const listHref = record.status === 'SENT' ? '/?tab=sent' : '/';
+  // which would silently switch a settled email's reader over to Scheduled.
+  const listHref = isScheduled ? '/' : '/?tab=sent';
 
   const handleCancel = () => {
     cancelEmail.mutate(record.id, {

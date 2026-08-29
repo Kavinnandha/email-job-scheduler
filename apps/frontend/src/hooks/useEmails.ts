@@ -15,30 +15,34 @@ import {
 
 export const emailKeys = {
   all: ['emails'] as const,
-  list: (status: EmailStatus, page: number) => ['emails', 'list', status, page] as const,
-  search: (status: EmailStatus, query: string, page: number) =>
-    ['emails', 'search', status, query, page] as const,
+  // Statuses are joined into the key so ['SENT','FAILED'] and ['SENT'] cannot
+  // collide in the cache.
+  list: (statuses: EmailStatus[], page: number) =>
+    ['emails', 'list', statuses.join(','), page] as const,
+  search: (statuses: EmailStatus[], query: string, page: number) =>
+    ['emails', 'search', statuses.join(','), query, page] as const,
 };
 
 export interface UseEmailListOptions {
-  status: EmailStatus;
+  /** Statuses to include. The Sent view asks for SENT and FAILED together. */
+  statuses: EmailStatus[];
   page: number;
   search: string;
   /** Poll only while there is work in flight; a settled list does not need it. */
   pollMs?: number;
 }
 
-export function useEmailList({ status, page, search, pollMs }: UseEmailListOptions) {
+export function useEmailList({ statuses, page, search, pollMs }: UseEmailListOptions) {
   const trimmed = search.trim();
 
   return useQuery<Paginated<EmailRecord> | EmailSearchResponse, ApiError>({
     queryKey: trimmed
-      ? emailKeys.search(status, trimmed, page)
-      : emailKeys.list(status, page),
+      ? emailKeys.search(statuses, trimmed, page)
+      : emailKeys.list(statuses, page),
     queryFn: () =>
       trimmed
-        ? searchEmails({ status, page, q: trimmed })
-        : getEmails({ status, page }),
+        ? searchEmails({ status: statuses, page, q: trimmed })
+        : getEmails({ status: statuses, page }),
     // Keeps the previous page visible while the next one loads, so paging and
     // typing in the search box do not flash an empty table.
     placeholderData: keepPreviousData,

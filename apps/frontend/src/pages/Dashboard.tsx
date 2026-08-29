@@ -62,8 +62,10 @@ export function DashboardPage() {
   // Any change to what is being asked for invalidates the current page number.
   useEffect(() => setPage(1), [tab, search, filters]);
 
-  const scheduled = useEmailList({ status: 'SCHEDULED', page, search, pollMs: 5000 });
-  const sent = useEmailList({ status: 'SENT', page, search, pollMs: 5000 });
+  const scheduled = useEmailList({ statuses: ['SCHEDULED'], page, search, pollMs: 5000 });
+  // FAILED rides along with SENT: both are settled deliveries, and a failure
+  // that appeared nowhere would leave the user with no way to see it.
+  const sent = useEmailList({ statuses: ['SENT', 'FAILED'], page, search, pollMs: 5000 });
 
   const active = tab === 'SCHEDULED' ? scheduled : sent;
 
