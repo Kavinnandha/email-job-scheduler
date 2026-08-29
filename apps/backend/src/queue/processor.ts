@@ -1,5 +1,4 @@
 import { DelayedError, UnrecoverableError, type Job } from 'bullmq';
-import { RATE_LIMIT_TIER } from '@repo/shared';
 import { env } from '../config/env.js';
 import { createLogger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
@@ -88,16 +87,25 @@ export async function processEmailJob(job: Job<EmailJobData>, token?: string): P
       'hourly limit reached - rescheduling into next window',
     );
 
-    // Only the hard sender ceiling is an operational event worth alerting on;
-    // a user's own campaign pacing working as configured is not.
-    if (quota.blockedBy === RATE_LIMIT_TIER.SENDER) {
-      const shouldAlert = await claimRateLimitAlert(sender.id, quota.window);
+    // Every tier that defers a send is worth one alert. Restricting this to
+    // the sender ceiling meant the notification almost never fired: sends are
+    // round-robined across a campaign's senders, so each sender counter climbs
+    // at 1/Nth the rate of the campaign counter and the campaign limit is what
+    // actually blocks in normal use.
+    if (quota.blockedBy && quota.blockedLimit !== null && quota.blockedScopeId) {
+      const shouldAlert = await claimRateLimitAlert(
+        quota.blockedBy,
+        quota.blockedScopeId,
+        quota.window,
+      );
       if (shouldAlert) {
         await notifyRateLimitHit({
           userId: email.userId,
+          tier: quota.blockedBy,
+          limit: quota.blockedLimit,
           senderName: sender.name,
           senderEmail: sender.fromEmail,
-          limit: env.MAX_EMAILS_PER_HOUR_PER_SENDER,
+          campaignSubject: campaign.subject,
           resumesAt: new Date(nextWindow),
         });
       }

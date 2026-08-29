@@ -14,9 +14,9 @@ export type EmailStatus = (typeof EMAIL_STATUS)[keyof typeof EMAIL_STATUS];
 
 /** Which limiter tier pushed a job into a later hour window. */
 export const RATE_LIMIT_TIER = {
-  /** Provider-throttling ceiling for a sender. Triggers the Slack alert. */
+  /** Provider-throttling ceiling for a sender. */
   SENDER: 'SENDER',
-  /** User-chosen pacing for one campaign. Never alerts. */
+  /** User-chosen pacing for one campaign. */
   CAMPAIGN: 'CAMPAIGN',
   /** Optional ceiling across every sender. */
   GLOBAL: 'GLOBAL',

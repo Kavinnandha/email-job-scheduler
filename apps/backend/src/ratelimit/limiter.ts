@@ -138,8 +138,16 @@ export interface ConsumeQuotaInput {
 
 export interface QuotaResult {
   allowed: boolean;
-  /** Which tier rejected the send. Only the SENDER tier raises a Slack alert. */
+  /** Which tier rejected the send. Every tier raises a Slack alert. */
   blockedBy: RateLimitTier | null;
+  /** The limit value of the tier that rejected, for the alert message. */
+  blockedLimit: number | null;
+  /**
+   * The entity the blocking limit is counted against - a sender id, a campaign
+   * id, or 'global'. Alerts are de-duplicated per scope, not per sender, so a
+   * campaign block and a sender block cannot silence one another.
+   */
+  blockedScopeId: string | null;
   window: number;
 }
 
@@ -152,33 +160,43 @@ export async function consumeQuota(input: ConsumeQuotaInput): Promise<QuotaResul
   const keys: string[] = [];
   const limits: number[] = [];
   const tiers: RateLimitTier[] = [];
+  const scopes: string[] = [];
 
   // Order is deliberate: the hard sender ceiling is evaluated first so that
-  // when both tiers are exhausted the sender tier is the one reported, and
+  // when several tiers are exhausted the sender tier is the one reported, and
   // the operator gets the alert that actually matters.
   keys.push(`rl:sender:${senderId}:${window}`);
   limits.push(env.MAX_EMAILS_PER_HOUR_PER_SENDER);
   tiers.push(RATE_LIMIT_TIER.SENDER);
+  scopes.push(senderId);
 
   if (env.MAX_EMAILS_PER_HOUR_GLOBAL > 0) {
     keys.push(`rl:global:${window}`);
     limits.push(env.MAX_EMAILS_PER_HOUR_GLOBAL);
     tiers.push(RATE_LIMIT_TIER.GLOBAL);
+    scopes.push('global');
   }
 
   keys.push(`rl:campaign:${campaignId}:${window}`);
   limits.push(campaignLimit);
   tiers.push(RATE_LIMIT_TIER.CAMPAIGN);
+  scopes.push(campaignId);
 
   const blockedIndex = Number(
     await client.eval(CONSUME_SCRIPT, keys.length, ...keys, ...limits, WINDOW_TTL_SECONDS),
   );
 
   if (blockedIndex === 0) {
-    return { allowed: true, blockedBy: null, window };
+    return { allowed: true, blockedBy: null, blockedLimit: null, blockedScopeId: null, window };
   }
 
-  return { allowed: false, blockedBy: tiers[blockedIndex - 1] ?? null, window };
+  return {
+    allowed: false,
+    blockedBy: tiers[blockedIndex - 1] ?? null,
+    blockedLimit: limits[blockedIndex - 1] ?? null,
+    blockedScopeId: scopes[blockedIndex - 1] ?? null,
+    window,
+  };
 }
 
 /**
@@ -205,17 +223,23 @@ export async function senderUsage(senderId: string, now = Date.now()): Promise<n
 }
 
 /**
- * One alert per sender per window. SET NX is the whole mechanism: whichever
- * worker wins the race sends the notification, and the rest see the key and
- * stay quiet, so a limit hit by 400 concurrent jobs still produces one message.
+ * One alert per limiter scope per window. SET NX is the whole mechanism:
+ * whichever worker wins the race sends the notification, and the rest see the
+ * key and stay quiet, so a limit hit by 400 concurrent jobs still produces one
+ * message.
+ *
+ * The key is scoped by tier as well as by entity. Keying it on the sender
+ * alone was wrong once campaign pacing started alerting too: a campaign block
+ * and a sender block in the same window would collapse into a single alert.
  */
 export async function claimRateLimitAlert(
-  senderId: string,
+  tier: RateLimitTier,
+  scopeId: string,
   window: number,
   client: Redis = redis,
 ): Promise<boolean> {
   const result = await client.set(
-    `alert:ratelimit:${senderId}:${window}`,
+    `alert:ratelimit:${tier}:${scopeId}:${window}`,
     '1',
     'EX',
     WINDOW_TTL_SECONDS,

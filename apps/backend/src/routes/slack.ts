@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
-import type { SlackStatus } from '@repo/shared';
+import { RATE_LIMIT_TIER, type SlackStatus } from '@repo/shared';
 import { env, slackOAuthConfigured } from '../config/env.js';
 import { getUser, requireAuth } from '../auth/requireAuth.js';
 import { createLogger } from '../lib/logger.js';
@@ -140,9 +140,11 @@ slackRouter.post('/test', requireAuth, async (req, res, next) => {
     const user = getUser(req);
     const sent = await notifyRateLimitHit({
       userId: user.id,
+      tier: RATE_LIMIT_TIER.SENDER,
+      limit: env.MAX_EMAILS_PER_HOUR_PER_SENDER,
       senderName: 'Test sender',
       senderEmail: 'test@example.com',
-      limit: env.MAX_EMAILS_PER_HOUR_PER_SENDER,
+      campaignSubject: 'Test campaign',
       resumesAt: new Date(Date.now() + 3_600_000),
     });
 
