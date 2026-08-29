@@ -1,0 +1,83 @@
+# Render blueprint: one free web service running the API, the BullMQ worker and
+# the built SPA in a single process.
+#
+# The two-process split (start + start:worker) is the better architecture and is
+# what docker-compose runs locally. Render's free tier grants one always-on
+# process, and a background worker is a paid service type, so this blueprint
+# uses the combined `start:all` entrypoint instead. Postgres and Redis are
+# external free tiers (Neon, Redis Cloud); Elasticsearch is omitted and search
+# degrades to Postgres, which is the system of record.
+services:
+  - type: web
+    name: email-job-scheduler
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    healthCheckPath: /health
+    buildCommand: >-
+      corepack enable &&
+      pnpm install --frozen-lockfile &&
+      pnpm build &&
+      pnpm --filter @repo/backend db:deploy:ci
+    startCommand: pnpm --filter @repo/backend start:all
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+
+      # --- Managed elsewhere on their own free tiers. Set in the dashboard.
+      - key: DATABASE_URL
+        sync: false          # Neon pooled connection string
+      - key: REDIS_URL
+        sync: false          # Redis Cloud rediss:// URL
+      - key: SESSION_SECRET
+        generateValue: true
+
+      # Empty: no Elasticsearch on this deployment. Search falls back to Postgres.
+      - key: ELASTICSEARCH_URL
+        value: ""
+
+      # --- Single origin: the SPA is served by this same service, so the two
+      # URLs are deliberately identical. Fill both in with the service URL
+      # Render assigns after the first deploy, then redeploy.
+      - key: BACKEND_URL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false          # https://<service>.onrender.com/api/auth/google/callback
+      - key: SLACK_CLIENT_ID
+        sync: false
+      - key: SLACK_CLIENT_SECRET
+        sync: false
+      - key: SLACK_REDIRECT_URI
+        sync: false          # https://<service>.onrender.com/api/slack/callback
+
+      # --- Throughput. Concurrency is 2, not the local 5: the free instance is
+      # 512MB and holds Postgres, Redis and SMTP connection pools alongside.
+      - key: WORKER_CONCURRENCY
+        value: "2"
+      - key: DELAY_BETWEEN_EMAILS_MS
+        value: "2000"
+      - key: MAX_EMAILS_PER_HOUR_PER_SENDER
+        value: "200"
+      - key: MAX_EMAILS_PER_HOUR_GLOBAL
+        value: "0"
+      - key: DEFAULT_CAMPAIGN_HOURLY_LIMIT
+        value: "100"
+      - key: ORDER_STEP_MS
+        value: "250"
+      - key: SENDER_COUNT
+        value: "3"
+      - key: SMTP_SENDERS
+        sync: false          # empty auto-provisions Ethereal accounts on boot
+      - key: BULL_BOARD_USER
+        sync: false
+      - key: BULL_BOARD_PASS
+        sync: false

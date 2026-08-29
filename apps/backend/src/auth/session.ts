@@ -18,10 +18,11 @@ export function createSessionMiddleware(): RequestHandler {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      // Frontend (5173) and API (4000) are different origins in dev, so the
-      // cookie must be SameSite=lax over http. In production both sit behind
-      // one domain over https and the cookie is hardened accordingly.
-      sameSite: isProduction ? 'strict' : 'lax',
+      // Lax, not Strict, even in production: the Google OAuth callback arrives
+      // as a top-level navigation from accounts.google.com, and Strict would
+      // withhold the cookie on exactly that request, losing the OAuth state.
+      // Lax still blocks the cross-site subrequests CSRF actually rides on.
+      sameSite: 'lax',
       secure: isProduction,
       maxAge: 1000 * 60 * 60 * 24 * 7,
     },

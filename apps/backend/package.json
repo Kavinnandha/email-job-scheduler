@@ -9,10 +9,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "start:worker": "node dist/worker.js",
+    "start:all": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
     "db:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "db:deploy:ci": "prisma migrate deploy",
     "db:reset": "dotenv -e ../../.env -- prisma migrate reset",
     "db:studio": "dotenv -e ../../.env -- prisma studio",
     "postinstall": "prisma generate"

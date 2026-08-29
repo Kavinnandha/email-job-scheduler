@@ -1,16 +1,23 @@
 import { Client } from '@elastic/elasticsearch';
-import { env } from '../config/env.js';
+import { elasticsearchConfigured, env } from '../config/env.js';
 import { createLogger } from './logger.js';
 
 const log = createLogger('elasticsearch');
 
 export const EMAILS_INDEX = 'emails';
 
-export const esClient = new Client({
-  node: env.ELASTICSEARCH_URL,
-  requestTimeout: 5_000,
-  maxRetries: 2,
-});
+/**
+ * Null when ELASTICSEARCH_URL is empty. The client constructor rejects an
+ * empty node, so a deployment that runs without a cluster must not build one
+ * at all rather than construct it and hope nothing calls it.
+ */
+export const esClient: Client | null = elasticsearchConfigured
+  ? new Client({
+      node: env.ELASTICSEARCH_URL,
+      requestTimeout: 5_000,
+      maxRetries: 2,
+    })
+  : null;
 
 let available: boolean | null = null;
 
@@ -20,6 +27,8 @@ let available: boolean | null = null;
  * so a dead cluster costs search quality, never correctness or delivery.
  */
 export async function isElasticsearchAvailable(force = false): Promise<boolean> {
+  // Not configured is a deployment choice, not a fault: never probe, never warn.
+  if (!esClient) return false;
   if (available !== null && !force) return available;
   try {
     await esClient.ping();
@@ -33,7 +42,7 @@ export async function isElasticsearchAvailable(force = false): Promise<boolean> 
 
 /** Idempotent: creating an index that already exists is a no-op. */
 export async function ensureEmailsIndex(): Promise<void> {
-  if (!(await isElasticsearchAvailable(true))) return;
+  if (!(await isElasticsearchAvailable(true)) || !esClient) return;
 
   const exists = await esClient.indices.exists({ index: EMAILS_INDEX });
   if (exists) {

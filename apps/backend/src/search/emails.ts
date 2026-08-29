@@ -28,7 +28,7 @@ export interface EmailSearchHit {
  */
 export async function indexEmail(emailId: string): Promise<void> {
   try {
-    if (!(await isElasticsearchAvailable())) return;
+    if (!(await isElasticsearchAvailable()) || !esClient) return;
 
     const email = await prisma.email.findUnique({
       where: { id: emailId },
@@ -64,7 +64,7 @@ export async function indexEmail(emailId: string): Promise<void> {
 /** Bulk variant used when a whole campaign is scheduled at once. */
 export async function indexEmailsForCampaign(campaignId: string): Promise<number> {
   try {
-    if (!(await isElasticsearchAvailable())) return 0;
+    if (!(await isElasticsearchAvailable()) || !esClient) return 0;
 
     const emails = await prisma.email.findMany({
       where: { campaignId },
@@ -102,7 +102,8 @@ export async function indexEmailsForCampaign(campaignId: string): Promise<number
 export interface SearchEmailsInput {
   userId: string;
   query: string;
-  status?: EmailStatus;
+  /** Restrict to these statuses; omitted or empty means every status. */
+  statuses?: EmailStatus[];
   page: number;
   pageSize: number;
 }
@@ -120,12 +121,14 @@ export interface SearchEmailsResult {
  * Postgres so the response is authoritative even if the index lags.
  */
 export async function searchEmails(input: SearchEmailsInput): Promise<SearchEmailsResult> {
-  const { userId, query, status, page, pageSize } = input;
+  const { userId, query, statuses, page, pageSize } = input;
 
-  if (await isElasticsearchAvailable()) {
+  if ((await isElasticsearchAvailable()) && esClient) {
     try {
       const filter: Record<string, unknown>[] = [{ term: { userId } }];
-      if (status) filter.push({ term: { status } });
+      // `terms` rather than `term` so the Sent view can ask for SENT and
+      // FAILED together in one query.
+      if (statuses?.length) filter.push({ terms: { status: statuses } });
 
       const response = await esClient.search({
         index: EMAILS_INDEX,
@@ -171,7 +174,7 @@ export async function searchEmails(input: SearchEmailsInput): Promise<SearchEmai
   // search keeps working when the cluster is down.
   const where = {
     userId,
-    ...(status ? { status } : {}),
+    ...(statuses?.length ? { status: { in: statuses } } : {}),
     ...(query
       ? {
           OR: [
@@ -200,7 +203,7 @@ export async function searchEmails(input: SearchEmailsInput): Promise<SearchEmai
 /** Removes a cancelled email from the index. Best-effort, like indexing. */
 export async function removeEmailFromIndex(emailId: string): Promise<void> {
   try {
-    if (!(await isElasticsearchAvailable())) return;
+    if (!(await isElasticsearchAvailable()) || !esClient) return;
     await esClient.delete({ index: EMAILS_INDEX, id: emailId }, { ignore: [404] });
   } catch (err) {
     log.warn({ emailId, err: String(err) }, 'failed to remove email from index');

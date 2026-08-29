@@ -8,6 +8,7 @@ import { createLogger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
 import { isElasticsearchAvailable } from './lib/elasticsearch.js';
+import { mountClient } from './static.js';
 import { authRouter } from './routes/auth.js';
 import { campaignsRouter } from './routes/campaigns.js';
 import { emailsRouter } from './routes/emails.js';
@@ -67,6 +68,9 @@ export function createApp(): Express {
       elasticsearch: search,
     });
   });
+
+  // Last route: the built SPA, if one was shipped alongside the API.
+  mountClient(app);
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: 'Not found' });

@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+// Empty string in a production build: the API and the SPA are served from one
+// origin there, so every request stays same-origin and relative. Dev keeps the
+// absolute :4000 base because Vite serves the SPA from :5173.
+const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? 'http://localhost:4000' : '');
 
 export class ApiError extends Error {
   constructor(

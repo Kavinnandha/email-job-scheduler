@@ -30,7 +30,13 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
-  ELASTICSEARCH_URL: z.string().url().default('http://localhost:9200'),
+  /** Empty disables search indexing entirely; queries fall back to Postgres. */
+  ELASTICSEARCH_URL: z
+    .string()
+    .default('http://localhost:9200')
+    .refine((v) => v === '' || z.string().url().safeParse(v).success, {
+      message: 'must be a valid URL, or empty to run without Elasticsearch',
+    }),
 
   SESSION_SECRET: z.string().min(16, 'SESSION_SECRET must be at least 16 chars'),
 
@@ -93,5 +99,11 @@ export const googleOAuthConfigured = Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_
 
 /** True only when both halves of a Slack app are configured. */
 export const slackOAuthConfigured = Boolean(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET);
+
+/**
+ * False on deployments that run without an Elasticsearch cluster. Search then
+ * degrades to Postgres, which is the system of record anyway.
+ */
+export const elasticsearchConfigured = Boolean(env.ELASTICSEARCH_URL);
 
 export const QUEUE_NAME = 'email-send';

@@ -12,8 +12,26 @@ const log = createLogger('emails-routes');
 
 export const emailsRouter: Router = Router();
 
+/**
+ * Accepts one status or a comma-separated list ("SENT,FAILED").
+ *
+ * The Sent view is really "everything the worker has settled", and a failed
+ * send belongs in the delivery log rather than disappearing from the UI - a
+ * single-value filter would leave FAILED emails reachable by direct URL only.
+ */
+const statusListSchema = z
+  .string()
+  .transform((raw) =>
+    raw
+      .split(',')
+      .map((part) => part.trim().toUpperCase())
+      .filter(Boolean),
+  )
+  .pipe(z.array(z.enum(['SCHEDULED', 'SENT', 'FAILED'])).min(1))
+  .optional();
+
 const listQuerySchema = z.object({
-  status: z.enum(['SCHEDULED', 'SENT', 'FAILED']).optional(),
+  status: statusListSchema,
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -63,7 +81,13 @@ emailsRouter.get('/search', requireAuth, async (req, res, next) => {
     const user = getUser(req);
     const { q, status, page, pageSize } = parsed.data;
 
-    const result = await searchEmails({ userId: user.id, query: q, status, page, pageSize });
+    const result = await searchEmails({
+      userId: user.id,
+      query: q,
+      statuses: status,
+      page,
+      pageSize,
+    });
 
     const rows =
       result.ids.length === 0
@@ -109,14 +133,14 @@ emailsRouter.get('/', requireAuth, async (req, res, next) => {
 
     const user = getUser(req);
     const { status, page, pageSize } = parsed.data;
-    const where = { userId: user.id, ...(status ? { status } : {}) };
+    const where = { userId: user.id, ...(status ? { status: { in: status } } : {}) };
 
-    // Scheduled reads best in send order (soonest first); sent/failed read
+    // Scheduled reads best in send order (soonest first); a settled list reads
     // best newest-first, which is what a delivery log is normally scanned for.
-    const orderBy =
-      status === 'SCHEDULED'
-        ? ({ scheduledAt: 'asc' } as const)
-        : ({ updatedAt: 'desc' } as const);
+    const scheduledOnly = status?.length === 1 && status[0] === 'SCHEDULED';
+    const orderBy = scheduledOnly
+      ? ({ scheduledAt: 'asc' } as const)
+      : ({ updatedAt: 'desc' } as const);
 
     const [total, rows] = await Promise.all([
       prisma.email.count({ where }),
