@@ -50,6 +50,10 @@ export function EmailDetailPage() {
   const record = email.data;
   const isScheduled = record.status === 'SCHEDULED';
 
+  // Return to the tab this email belongs to rather than the dashboard default,
+  // which would silently switch a sent email's reader over to Scheduled.
+  const listHref = record.status === 'SENT' ? '/?tab=sent' : '/';
+
   const handleCancel = () => {
     cancelEmail.mutate(record.id, {
       onSuccess: () => {
@@ -64,7 +68,7 @@ export function EmailDetailPage() {
     <div className="flex h-screen flex-col overflow-hidden bg-white">
       <header className="flex items-center gap-4 border-b border-line px-6 py-4">
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate(listHref)}
           aria-label="Back"
           className="rounded-lg p-1 text-ink transition-colors hover:bg-field"
         >

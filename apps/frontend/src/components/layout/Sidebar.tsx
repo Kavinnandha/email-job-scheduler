@@ -11,40 +11,28 @@ export interface SidebarProps {
   onSelectStatus: (status: Extract<EmailStatus, 'SCHEDULED' | 'SENT'>) => void;
 }
 
-/** Blocky wordmark from the design, drawn rather than shipped as an asset. */
+/**
+ * Blocky "ONB" wordmark from the design, drawn as a 5x7 bitmap per glyph rather
+ * than shipped as an asset so it stays crisp at any zoom and inherits the ink
+ * colour.
+ */
+const WORDMARK_GLYPHS = [
+  // '#' is a filled cell, '.' is empty.
+  ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  ['#...#', '##..#', '##..#', '#.#.#', '#..##', '#..##', '#...#'],
+  ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.'],
+];
+
 function Wordmark() {
   return (
-    <div className="flex items-center gap-[3px] px-1" aria-label="OneBox">
-      {[
-        // Each glyph is a 3x5 bitmap; 1 = filled cell.
-        [
-          [1, 1, 1],
-          [1, 0, 1],
-          [1, 0, 1],
-          [1, 0, 1],
-          [1, 1, 1],
-        ],
-        [
-          [1, 1, 0],
-          [1, 0, 1],
-          [1, 0, 1],
-          [1, 0, 1],
-          [1, 1, 0],
-        ],
-        [
-          [1, 1, 0],
-          [1, 0, 1],
-          [1, 1, 0],
-          [1, 0, 1],
-          [1, 1, 0],
-        ],
-      ].map((glyph, gi) => (
-        <div key={gi} className="grid grid-cols-3 gap-[2px]">
+    <div className="flex items-center gap-[4px]" aria-label="ONB" role="img">
+      {WORDMARK_GLYPHS.map((glyph, gi) => (
+        <div key={gi} className="grid grid-cols-5 gap-px">
           {glyph.flatMap((row, ri) =>
-            row.map((cell, ci) => (
+            [...row].map((cell, ci) => (
               <span
                 key={`${ri}-${ci}`}
-                className={cn('h-[6px] w-[6px]', cell ? 'bg-ink' : 'bg-transparent')}
+                className={cn('h-[5px] w-[5px]', cell === '#' ? 'bg-ink' : 'bg-transparent')}
               />
             )),
           )}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarIcon } from '@/components/icons';
 import { toDateTimeLocalValue } from '@/lib/datetime';
+import { cn } from '@/lib/cn';
 
 export interface SendLaterPopoverProps {
   /** Currently staged value, or null when sending immediately. */
@@ -35,6 +36,12 @@ function buildPresets(now: Date): Preset[] {
 export function SendLaterPopover({ value, onApply, onClose }: SendLaterPopoverProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState<string>(value ? toDateTimeLocalValue(value) : '');
+  const [focused, setFocused] = useState(false);
+
+  // An empty datetime-local still paints its own "dd-mm-yyyy --:--" mask, which
+  // collided with the design's placeholder. Hide the mask until the field is
+  // focused or filled, and show the placeholder only in that same window.
+  const showNativeMask = Boolean(draft) || focused;
 
   // Presets are derived once per mount so they cannot shift under the user
   // while the popover is open.
@@ -83,17 +90,22 @@ export function SendLaterPopover({ value, onApply, onClose }: SendLaterPopoverPr
           // datetime-local has no timezone, so the value is read as local time -
           // the same clock the user is picking against.
           onChange={(e) => setDraft(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           // Prevents choosing a moment that has already passed.
           min={toDateTimeLocalValue(new Date())}
           aria-label="Pick date and time"
-          className="w-full bg-transparent pr-8 text-[15px] text-ink focus:outline-none [&::-webkit-calendar-picker-indicator]:opacity-0"
+          className={cn(
+            'block h-6 w-full bg-transparent pr-8 text-[15px] leading-6 focus:outline-none [&::-webkit-calendar-picker-indicator]:opacity-0',
+            showNativeMask ? 'text-ink' : 'text-transparent',
+          )}
         />
-        {!draft && (
-          <span className="pointer-events-none absolute left-0 top-0 text-[15px] text-ink-muted">
+        {!showNativeMask && (
+          <span className="pointer-events-none absolute left-0 top-0 text-[15px] leading-6 text-ink-muted">
             Pick date &amp; time
           </span>
         )}
-        <CalendarIcon className="pointer-events-none absolute right-0 top-0 h-5 w-5 text-ink-muted" />
+        <CalendarIcon className="pointer-events-none absolute right-0 top-0.5 h-5 w-5 text-ink-muted" />
       </div>
 
       <ul className="mt-5 space-y-4">

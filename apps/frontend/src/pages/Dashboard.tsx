@@ -29,7 +29,16 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [tab, setTab] = useState<TabValue>('SCHEDULED');
+  // The active tab lives in the URL so that opening an email and coming back
+  // returns to the list the user was actually looking at.
+  const tab: TabValue = searchParams.get('tab') === 'sent' ? 'SENT' : 'SCHEDULED';
+  const setTab = (next: TabValue) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'SENT') params.set('tab', 'sent');
+    else params.delete('tab');
+    setSearchParams(params, { replace: true });
+  };
+
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<TopBarFilters>(EMPTY_FILTERS);

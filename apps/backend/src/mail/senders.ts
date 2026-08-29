@@ -89,8 +89,10 @@ async function provisionEtherealAccounts(
  *   3. freshly provisioned Ethereal accounts
  *
  * Idempotent: safe to run in both the API and worker processes, and on every
- * restart. Senders are upserted on fromEmail so the pool converges rather
- * than growing.
+ * restart. The resolved config is the source of truth - senders in it are
+ * upserted and (re)activated, senders absent from it are deactivated - so the
+ * pool converges on the config rather than accumulating every account the
+ * app has ever seen.
  */
 export async function ensureSenderPool(): Promise<Sender[]> {
   let configs: SmtpSenderConfig[] = env.SMTP_SENDERS;
@@ -126,9 +128,35 @@ export async function ensureSenderPool(): Promise<Sender[]> {
         smtpPort: config.smtpPort,
         smtpUser: config.smtpUser,
         smtpPass: config.smtpPass,
+        // Reactivate on the way back in, so a sender that was retired and then
+        // restored to the config rejoins the pool instead of staying dark.
+        active: true,
       },
     });
     senders.push(sender);
+  }
+
+  /*
+   * Retire anything the config no longer names. listActiveSenders() is what
+   * feeds round-robin, so a stale row keeps taking a share of every campaign -
+   * which is how switching from the auto-provisioned Ethereal accounts to real
+   * SMTP would otherwise leave a third of the mail going nowhere.
+   *
+   * Deactivated rather than deleted: sent emails carry a foreign key to their
+   * sender, and that history should stay readable.
+   *
+   * The length guard matters. Prisma treats `notIn: []` as "exclude nothing",
+   * so an empty config here would deactivate the entire pool.
+   */
+  if (senders.length > 0) {
+    const keep = senders.map((s) => s.fromEmail);
+    const retired = await prisma.sender.updateMany({
+      where: { active: true, fromEmail: { notIn: keep } },
+      data: { active: false },
+    });
+    if (retired.count > 0) {
+      log.info({ count: retired.count }, 'deactivated senders no longer in config');
+    }
   }
 
   log.info({ count: senders.length, source }, 'sender pool ready');
