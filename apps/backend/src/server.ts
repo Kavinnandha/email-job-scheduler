@@ -1,6 +1,6 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
-import { ensureEmailsIndex } from './lib/elasticsearch.js';
+import { initEmailSearch } from './search/emails.js';
 import { createLogger } from './lib/logger.js';
 import { disconnectPrisma } from './lib/prisma.js';
 import { disconnectRedis } from './lib/redis.js';
@@ -20,7 +20,7 @@ const log = createLogger('server');
  * and reconcileQueue() on boot is what makes that survivable.
  */
 async function main() {
-  await ensureEmailsIndex();
+  await initEmailSearch();
   await ensureSenderPool();
 
   const app = createApp();

@@ -1,6 +1,6 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
-import { ensureEmailsIndex } from './lib/elasticsearch.js';
+import { initEmailSearch } from './search/emails.js';
 import { createLogger } from './lib/logger.js';
 import { disconnectPrisma } from './lib/prisma.js';
 import { disconnectRedis } from './lib/redis.js';
@@ -10,7 +10,7 @@ const log = createLogger('api');
 
 async function main() {
   // Both are idempotent and safe to run on every boot in either process.
-  await ensureEmailsIndex();
+  await initEmailSearch();
   await ensureSenderPool();
 
   const app = createApp();

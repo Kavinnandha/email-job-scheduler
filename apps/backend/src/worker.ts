@@ -1,5 +1,5 @@
 import { createLogger } from './lib/logger.js';
-import { ensureEmailsIndex } from './lib/elasticsearch.js';
+import { initEmailSearch } from './search/emails.js';
 import { disconnectPrisma } from './lib/prisma.js';
 import { disconnectRedis } from './lib/redis.js';
 import { ensureSenderPool } from './mail/senders.js';
@@ -8,7 +8,7 @@ import { startWorker, stopWorker } from './queue/runWorker.js';
 const log = createLogger('worker-main');
 
 async function main() {
-  await ensureEmailsIndex();
+  await initEmailSearch();
   await ensureSenderPool();
 
   const worker = await startWorker();

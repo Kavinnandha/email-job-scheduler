@@ -1,5 +1,10 @@
 import type { EmailStatus } from '@repo/shared';
-import { EMAILS_INDEX, esClient, isElasticsearchAvailable } from '../lib/elasticsearch.js';
+import {
+  EMAILS_INDEX,
+  ensureEmailsIndex,
+  esClient,
+  isElasticsearchAvailable,
+} from '../lib/elasticsearch.js';
 import { createLogger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
 
@@ -140,19 +145,39 @@ export async function searchEmails(input: SearchEmailsInput): Promise<SearchEmai
             must: query
               ? [
                   {
-                    multi_match: {
-                      query,
-                      // Subject outranks body; recipient is boosted so searching
-                      // for an address finds it ahead of a body mention.
-                      fields: ['subject^3', 'recipient^2', 'body'],
-                      fuzziness: 'AUTO',
+                    bool: {
+                      // The n-gram fields and the plain-analysed body cannot
+                      // share one multi_match: fuzziness against n-grams is
+                      // both meaningless and expensive, so they are scored as
+                      // separate clauses and OR-ed together.
+                      should: [
+                        {
+                          multi_match: {
+                            query,
+                            // Subject outranks the rest; recipient and sender
+                            // are boosted so searching for an address or a
+                            // sender finds it ahead of a body mention.
+                            fields: ['subject^3', 'recipient^2', 'senderName^2'],
+                            type: 'best_fields',
+                          },
+                        },
+                        {
+                          match: { body: { query, fuzziness: 'AUTO' } },
+                        },
+                      ],
+                      minimum_should_match: 1,
                     },
                   },
                 ]
               : [{ match_all: {} }],
           },
         },
-        sort: [{ scheduledAt: { order: 'desc' } }],
+        // Relevance first, then recency as the tie-break. Sorting by date
+        // alone discarded the ranking the query had just computed, so an
+        // exact subject hit could land below an incidental body match.
+        sort: query
+          ? [{ _score: { order: 'desc' } }, { scheduledAt: { order: 'desc' } }]
+          : [{ scheduledAt: { order: 'desc' } }],
       });
 
       const total =
@@ -179,6 +204,10 @@ export async function searchEmails(input: SearchEmailsInput): Promise<SearchEmai
       ? {
           OR: [
             { recipient: { contains: query, mode: 'insensitive' as const } },
+            // Sender name is searchable here too, so the fallback covers the
+            // same fields as the index rather than silently dropping results
+            // the moment the cluster goes down.
+            { sender: { name: { contains: query, mode: 'insensitive' as const } } },
             { campaign: { subject: { contains: query, mode: 'insensitive' as const } } },
             { campaign: { body: { contains: query, mode: 'insensitive' as const } } },
           ],
@@ -198,6 +227,82 @@ export async function searchEmails(input: SearchEmailsInput): Promise<SearchEmai
   ]);
 
   return { ids: rows.map((r) => r.id), total, usedElasticsearch: false };
+}
+
+/**
+ * Rebuilds the whole index from Postgres. Used after a schema change, where
+ * the old index has been dropped and every document has to be regenerated.
+ *
+ * Batched rather than one bulk call: a single request holding every email in
+ * the system is the one that fails on a large deployment, and a partial
+ * backfill that got most of the way is far better than one that got nowhere.
+ */
+export async function reindexAllEmails(batchSize = 500): Promise<number> {
+  if (!(await isElasticsearchAvailable()) || !esClient) return 0;
+
+  let cursor: string | undefined;
+  let indexed = 0;
+
+  for (;;) {
+    const emails = await prisma.email.findMany({
+      take: batchSize,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      orderBy: { id: 'asc' },
+      include: {
+        sender: { select: { name: true } },
+        campaign: { select: { subject: true, body: true } },
+      },
+    });
+    if (emails.length === 0) break;
+
+    const operations = emails.flatMap((email) => [
+      { index: { _index: EMAILS_INDEX, _id: email.id } },
+      {
+        campaignId: email.campaignId,
+        userId: email.userId,
+        senderId: email.senderId,
+        senderName: email.sender.name,
+        recipient: email.recipient,
+        subject: email.campaign.subject,
+        body: email.campaign.body,
+        status: email.status,
+        sequenceIndex: email.sequenceIndex,
+        scheduledAt: email.scheduledAt.toISOString(),
+        sentAt: email.sentAt?.toISOString() ?? null,
+      },
+    ]);
+
+    const result = await esClient.bulk({ operations, refresh: false });
+    if (result.errors) log.warn({ cursor }, 'some documents failed to backfill');
+
+    indexed += emails.length;
+    cursor = emails[emails.length - 1]?.id;
+    if (emails.length < batchSize) break;
+  }
+
+  // Unlike the incremental paths, make the result searchable immediately:
+  // a backfill exists precisely so search works on the next request.
+  await esClient.indices.refresh({ index: EMAILS_INDEX });
+
+  log.info({ indexed }, 'search index backfilled from postgres');
+  return indexed;
+}
+
+/**
+ * Boot-time entry point: bring the index schema up to date and, when that
+ * required a rebuild, refill it. Safe to run from several processes at once -
+ * documents are written by email id, so a concurrent backfill overwrites with
+ * identical content rather than duplicating.
+ */
+export async function initEmailSearch(): Promise<void> {
+  try {
+    const { rebuilt } = await ensureEmailsIndex();
+    if (rebuilt) await reindexAllEmails();
+  } catch (err) {
+    // Search setup must never stop the process from booting: every query
+    // degrades to Postgres on its own.
+    log.warn({ err: String(err) }, 'search initialisation failed - falling back to postgres');
+  }
 }
 
 /** Removes a cancelled email from the index. Best-effort, like indexing. */
